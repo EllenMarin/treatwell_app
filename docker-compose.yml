@@ -1,0 +1,122 @@
+version: '3.8'
+
+services:
+  # PHP Application Container
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: treatwell_app
+    restart: unless-stopped
+    working_dir: /var/www
+    volumes:
+      - ./:/var/www
+      - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini
+    networks:
+      - treatwell
+    depends_on:
+      - db
+      - redis
+
+  # Nginx Web Server
+  nginx:
+    image: nginx:alpine
+    container_name: treatwell_nginx
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    volumes:
+      - ./:/var/www
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d
+    networks:
+      - treatwell
+    depends_on:
+      - app
+
+  # MySQL Database
+  db:
+    image: mysql:8.0
+    container_name: treatwell_db
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-treatwell}
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-secret}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
+      MYSQL_USER: ${DB_USERNAME:-treatwell}
+      SERVICE_TAGS: dev
+      SERVICE_NAME: mysql
+    volumes:
+      - dbdata:/var/lib/mysql
+      - ./docker/mysql/my.cnf:/etc/mysql/my.cnf
+    ports:
+      - "3306:3306"
+    networks:
+      - treatwell
+
+  # Redis Cache & Queue
+  redis:
+    image: redis:alpine
+    container_name: treatwell_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    networks:
+      - treatwell
+
+  # Mailhog for Email Testing
+  mailhog:
+    image: mailhog/mailhog
+    container_name: treatwell_mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - treatwell
+
+  # Queue Worker (Laravel Queue)
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: treatwell_queue
+    restart: unless-stopped
+    working_dir: /var/www
+    command: php artisan queue:work --sleep=3 --tries=3
+    volumes:
+      - ./:/var/www
+    networks:
+      - treatwell
+    depends_on:
+      - db
+      - redis
+
+  # Scheduler (Laravel Cron)
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: treatwell_scheduler
+    restart: unless-stopped
+    working_dir: /var/www
+    command: /bin/sh -c "while true; do php artisan schedule:run --verbose --no-interaction & sleep 60; done"
+    volumes:
+      - ./:/var/www
+    networks:
+      - treatwell
+    depends_on:
+      - db
+      - redis
+
+networks:
+  treatwell:
+    driver: bridge
+
+volumes:
+  dbdata:
+    driver: local
+  redisdata:
+    driver: local
+
